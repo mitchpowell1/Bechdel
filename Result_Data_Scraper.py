@@ -13,7 +13,7 @@ outfile = open('Bechdel_Data2','w')
 datalines = []
 datalines.append(("{:50}{:7}{}\n\n".format("TITLE",'YEAR','SCORE')))
 
-for x in [181,445,738,782, 789,837,875,1130]:
+for x in range(1,6830):
     url = "http://www.bechdeltest.com/view/"+str(x)+"/"
     try:
         raw_text = request.urlopen(url).read().decode("iso-8859-1")
