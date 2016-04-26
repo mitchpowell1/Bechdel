@@ -8,19 +8,8 @@ from bs4 import BeautifulSoup
 # This function reads a movie script and pulls out the names of characters. The regular expressions will cause issues
 # if the movie script is not formatted well, however.
 ###
-def get_popular_characters(script_name):
-    sample_script = open(script_name, 'r')
-    sample_script_lines = [line.strip() for line in sample_script.split('\n') if len(line) > 0]
-
-    patterns = [
-        (r'^INT\..*?$|^EXT\..*?$', 'S'),
-        (r'^[A-Z\.\-]+$|^[A-Z\.\-]+\s*[A-Za-z]+$', 'C')
-    ]
-
-    retagger = nltk.RegexpTagger(patterns)
-
-    characters = [char for char, tag in retagger.tag(sample_script_lines) if tag == "C"]
-    character_freqs = nltk.FreqDist(characters)
+def get_popular_characters(character_list):
+    character_freqs = nltk.FreqDist(character_list)
     top_characters = [character for character, freq in character_freqs.most_common(20)]
     return top_characters
 
@@ -29,7 +18,8 @@ def get_popular_characters(script_name):
 # Defined this because I found myself doing it a lot. Was attempting not to reuse too much code.
 ###
 def open_script(movie):
-    return open('./Scripts/'+movie+".script").read()
+    script = open('./Scripts/'+movie+".script").read()
+    return script
 
 
 ###
@@ -49,7 +39,41 @@ def is_well_formatted(movie):
     for line in scriptlines:
         if len(line)-len(line.lstrip()) in most_common:
             formatted_lines += 1
-    return formatted_lines/len(scriptlines) > .9
+    percentage = formatted_lines/len(scriptlines)
+    #print(percentage)
+    # Reject any movies whose percentage of lines on common indentation levels does not fall between 90 and 99.5 percent
+    return .9 < percentage < .995
+
+
+###
+# Sanity check: Checks if the character names, scene boundaries and dialog line up as you would expect in a typical
+# script. E.g. Scene descriptions after scene boundaries, dialog after character names, character names occur between
+# scene boundaries
+###
+def sanity_check(tagged_lines):
+    tags = []
+    strange_tags = 0
+    for x in range(len(tagged_lines)):
+        tags.append(tagged_lines[x][1])
+        # Scene boundaries should be followed by either a scene description or a character name
+        if tagged_lines[x][1] == "S":
+                if tagged_lines[x+1][1] not in ["N","C"]:
+                    strange_tags += 1
+        # Dialog lines should occur after Character names, and the only lines in between should be
+        # meta-information, scene descriptions, or other dialog lines.
+        if tagged_lines[x][1] == "D":
+            character_name_found = False
+            start_node = x-1
+            while start_node >= 0 and not character_name_found:
+                if tagged_lines[start_node][1] == "C":
+                    character_name_found = True
+                else:
+                    if tagged_lines[start_node][1] not in "MND":
+                        strange_tags+=1
+                    start_node -= 1
+    #print("Strange Tags:",strange_tags)
+    #print("Strange Tag Ratio:", round(100*(strange_tags/len(tagged_lines)), 2))
+    return 100*(strange_tags/len(tagged_lines)) < 10
 
 
 ###
@@ -68,11 +92,11 @@ def tag_lines(movie):
     scriptlines = [line for line in script.split('\n') if len(line.strip()) > 0]
     indentations = [len(line)-len(line.lstrip()) for line in scriptlines]
     indentation_frequencies = nltk.FreqDist(indentations)
-    important_levels = sorted([key for key, value, in indentation_frequencies.most_common(4)])
+    important_levels = sorted([key for key, value, in indentation_frequencies.most_common(5)])
     tagged_lines = []
     for line in range(len(scriptlines)):
         if indentations[line] == important_levels[0]:
-            if re.match(r'^(EXT\..*|INT\..*)$',scriptlines[line].strip()):
+            if re.match(r'^([\d\.]{2,})?\s*(EXT\.?.*|INT\.?.*)$',scriptlines[line].strip()):
                 tagged_lines.append((scriptlines[line], "S"))
             else:
                 tagged_lines.append((scriptlines[line], "N"))
@@ -81,12 +105,15 @@ def tag_lines(movie):
         elif indentations[line] == important_levels[2]:
             tagged_lines.append((scriptlines[line], "M"))
         elif indentations[line] == important_levels[3]:
-            if re.match(r'^\(.+\)$',scriptlines[line].strip()):
+            if re.match(r'^\(.+\)| .+\) | \(.+$',scriptlines[line].strip()):
                 tagged_lines.append((scriptlines[line], "M"))
             else:
                 tagged_lines.append((scriptlines[line], "C"))
+        elif indentations[line] == important_levels[4]:
+            tagged_lines.append((scriptlines[line], "M"))
         else:
             tagged_lines.append((scriptlines[line], "U"))
+    sanity_check(tagged_lines)
     return tagged_lines
 
 
@@ -147,74 +174,138 @@ def name_features(name):
 def classify_genders_bing(movie, backupclassifier, characterlist):
     char_gends = {}
     for character in characterlist:
-        url = "http://www.bing.com/search?q=who+plays+" + '+'.join(character.split(' ')) + "+in+" + "+".join(
-            movie.replace("'", "").split(' '))
-        raw_html = request.urlopen(url).read().decode('utf-8')
-        soup = BeautifulSoup(raw_html)
-        gender = ''
-        # The subtitle on the bing results b_content box often contains "Actor or Actress"
-        subtitle = soup.find('div', {'class': 'b_entitySubTitle'})
-        actor_snippet = soup.find('div', {'class': 'b_lBottom'})
-        # If the subtitle exists
-        if subtitle is not None:
-            sub_text = subtitle.get_text()
-            if 'Actor' in sub_text:
-                gender = 'male'
-            elif 'Actress' in sub_text:
-                gender = 'female'
-        # If there is no subtitle
-        else:
-            title = soup.find('h2',{'class': 'b_entityTitle'})
-            # The b_context box often contains a little tidbit about the life of the actor/actress (This is useful if
-            # they are listed as a "comedian" or "singer" or something along those lines
-            if actor_snippet is not None:
-                snip = actor_snippet.get_text()
-                if 'actress' in snip.lower():
-                    gender = "female"
-                elif 'actor' in snip.lower():
+        try:
+            url = "http://www.bing.com/search?q=who+plays+" + '+'.join(character.split(' ')) + "+in+" + "+".join(
+                movie.replace("'", "").split(' '))
+            raw_html = request.urlopen(url).read().decode('utf-8')
+            soup = BeautifulSoup(raw_html)
+            gender = ''
+            if len(character) == 0:
+                gender = "male"
+            # The subtitle on the bing results b_content box often contains "Actor or Actress"
+            subtitle = soup.find('div', {'class': 'b_entitySubTitle'})
+            actor_snippet = soup.find('div', {'class': 'b_lBottom'})
+            # If the subtitle exists
+            if subtitle is not None:
+                sub_text = subtitle.get_text()
+                if 'Actor' in sub_text:
                     gender = 'male'
-            # The names of the actors/actresses are often more useful in the classification of the gender than the
-            # names of the characters, so we classify their names if we can find them.
-            elif title is not None:
-                if len(title.get_text().split()) == 2:
-                    gender=backupclassifier.classify(name_features(title.get_text().split()[0].lower()))
-        # If we have come all this way without assigning a gender to the character, we go ahead and try to classify the
-        # character by their name. This is often not a great means of gender classification, but it is presumably
-        # better than nothing.
-        if gender == '':
-            gender=backupclassifier.classify(name_features(character.title()))
-        char_gends[character] = gender
-        print(character, gender)
+                elif 'Actress' in sub_text:
+                    gender = 'female'
+            # If there is no subtitle
+            else:
+                title = soup.find('h2',{'class': 'b_entityTitle'})
+                # The b_context box often contains a little tidbit about the life of the actor/actress (This is useful if
+                # they are listed as a "comedian" or "singer" or something along those lines
+                if actor_snippet is not None:
+                    snip = actor_snippet.get_text()
+                    if 'actress' in snip.lower():
+                        gender = "female"
+                    elif 'actor' in snip.lower():
+                        gender = 'male'
+                # The names of the actors/actresses are often more useful in the classification of the gender than the
+                # names of the characters, so we classify their names if we can find them.
+                elif title is not None:
+                    if len(title.get_text().split()) == 2:
+                        gender=backupclassifier.classify(name_features(title.get_text().split()[0].lower()))
+            # If we have come all this way without assigning a gender to the character, we go ahead and try to classify the
+            # character by their name. This is often not a great means of gender classification, but it is presumably
+            # better than nothing.
+            if gender == '':
+                gender=backupclassifier.classify(name_features(character.title()))
+            char_gends[character] = gender
+        except UnicodeEncodeError:
+            char_gends[character] = backupclassifier.classify(name_features(character.title()))
     return char_gends
 
 
 ###
 # Takes a movie name as input and determines whether or not the movie passes the
 ###
-def passes_test_one(movie):
-    character_list = get_popular_characters("./Scripts/" + movie + ".script")
-    gender_classifier = make_classifier()
-    char_genders = classify_genders_bing(movie, gender_classifier, character_list)
-    female_chars = 0
-    for char in character_list:
-        if char_genders[char] == "female":
-            female_chars += 1
-    print("Num:",female_chars)
-    return female_chars >= 2
+def passes_test_one(characters, gender_map):
+    females = 0
+    for character in characters:
+        if gender_map[character] == "female":
+            #print(character)
+            females += 1
+    #print("Named Female Characters:",females)
+    return females >= 2
+
+
+###
+# Extracts a character name from a character-mention line in a movie script (this is useful because sometimes
+# movie scripts have some meta data associated with them, and that's pretty uncool
+###
+def extract_character_names(character_line):
+    if re.match(r'[A-Za-z\.\-]+.*\(.+\)?.*', character_line):
+        character = re.findall(r'([A-Z\-\.\s]+)(\s*\(.*\))?', character_line)[0][0].strip()
+    else:
+        character = character_line.strip()
+    return character
+
+
+###
+# This function takes a list of tagged lines as input, and returns a list of scenes
+###
+def split_by_scene(tagged_lines):
+    scene = []
+    scenes = []
+    for line, tag in tagged_lines:
+        if tag == "S":
+            scenes.append(scene)
+            scene = []
+        scene.append((line,tag))
+    return scenes
+
+
+###
+# This function is used to compile a list of movies that are both well-formatted, and whose parse passes
+# the sanity check.
+###
+def get_parseable_movies():
+    bechdel_list = open("Bechdel_Data","r")
+    parseable_scripts = open("Parseable", "w")
+    movies = [line.split(',')[0].strip() for line in bechdel_list.readlines()]
+    for movie in movies:
+        try:
+            if is_well_formatted(movie) and sanity_check(tag_lines(movie)):
+                parseable_scripts.write(movie+"\n")
+        except FileNotFoundError:
+            continue
 
 
 def main():
-    club = tag_lines("Mulan")
-    for line, tag in club:
-        if tag == "U":
-            print(line)
-    '''movies = [line.split(',')[0].strip() for line in open('Bechdel_Data','r').read().split('\n')]
+    moviesfile = open("Parseable",'r')
+    movies = [movie.strip() for movie in moviesfile.readlines()]
+    gender_classifier = make_classifier()
+    testoneresults = open("test_one",'w')
     for movie in movies:
-        try:
-            if is_well_formatted(movie):
-                print(movie)
-        except FileNotFoundError:
-            continue'''
+        tagged_lines = tag_lines(movie)
+        char_lines = [line.strip() for line, tag in tagged_lines if tag == "C"]
+        chars = get_popular_characters([extract_character_names(char) for char in char_lines])
+        genders = classify_genders_bing(movie, gender_classifier, chars)
+        print(movie+" passes test one: "+str(passes_test_one(chars,genders)))
+        testoneresults.write(movie+", "+str(passes_test_one(chars,genders)))
+    testoneresults.close()
+    '''scenes = split_by_scene(tagged_lines)
+    gender_classifier = make_classifier()
+    print(len(scenes))
+    # A list of all lines containing character mentions
+    char_lines = [line.strip() for line, tag in tagged_lines if tag == "C"]
+    # Pull any metadata out of character mention tags for gender classification purposes
+    chars = get_popular_characters([extract_character_names(char) for char in char_lines])
+    genders = classify_genders_bing(movie, gender_classifier, chars)
+    print("Passes Test One: ", passes_test_one(chars,genders))
+    for line, tag in scenes[4]:
+        if tag == "C":
+            try:
+                gender = genders[extract_character_names(line.strip())]
+                print(line,tag,gender)
+            except KeyError:
+                print(line, tag, "Not a popular character")
+        else:
+            print(line, tag)
+    '''
 
 # I want to be able to import these functions as a module in a separate .py file without running the main method.
 if __name__ == "__main__":
