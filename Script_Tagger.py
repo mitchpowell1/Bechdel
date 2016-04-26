@@ -145,6 +145,9 @@ def make_classifier():
 ###
 # This name_features method is used by the gender classifier in order to determine the gender of a name
 # (This is used as a backoff from the bing-powered gender classification
+#
+# Note: This name_features function is a slight augmentation of the one that can be found in the NLTK
+# online book at http://www.nltk.org/book/ch06.html
 ###
 def name_features(name):
     features = {
@@ -274,38 +277,111 @@ def get_parseable_movies():
             continue
 
 
-def main():
+###
+# This function evaluates how good the performance of the classifier is for test One.
+###
+def evaluate_test_one():
+    moviesfile = open("Bechdel_Data", 'r')
+    testfile = open("t1",'r')
+    moviesfile.readline()
+    bechdel_scores = {}
+    visited = {}
+    total = 0
+    true_pos = 0
+    false_pos = 0
+    true_neg = 0
+    false_neg = 0
+    for line in moviesfile:
+        if len(line.split(',')) == 3:
+            data = line.split(',')
+            movie = data[0].strip()
+            score = data[2].strip()
+            bechdel_scores[movie] = score
+    for line in testfile:
+        data = line.split(',')
+        movie = data[0].strip()
+        if not visited.get(movie):
+            visited[movie] = True
+            total+=1
+            passes_test = data[1].strip() == "True"
+            # print(movie, passes_test)
+            # If the classifier evaluates that the movie passes the first test
+            if passes_test:
+                # Check if the data agrees
+                # True Positive:
+                if int(bechdel_scores[movie]) > 0:
+                    true_pos += 1
+                # False positive
+                else:
+                    false_pos += 1
+            # If the classifier evaluates that the movie failed the first test
+            else:
+                # True Negative:
+                if int(bechdel_scores[movie]) == 0:
+                    true_neg += 1
+                # False Negative:
+                else:
+                    false_neg += 1
+        else:
+            print(movie)
+    print("Total: "+str(total))
+    print("True Positives: "+str(true_pos))
+    print("True Negatives: "+str(true_neg))
+    print("False Positives: "+str(false_neg))
+    print("False Negatives: "+str(false_neg))
+    print("Accuracy: "+str((true_pos+true_neg)/total))
+
+
+###
+# Performs the first Bechdel test and writes the results to a datafile. I do it this way because the first test takes
+# a very long time, since it has to gather data from Bing
+###
+def perform_test_one():
     moviesfile = open("Parseable",'r')
     movies = [movie.strip() for movie in moviesfile.readlines()]
     gender_classifier = make_classifier()
-    testoneresults = open("test_one",'w')
+    testoneresults = open("Test_One_Results",'w')
     for movie in movies:
         tagged_lines = tag_lines(movie)
         char_lines = [line.strip() for line, tag in tagged_lines if tag == "C"]
         chars = get_popular_characters([extract_character_names(char) for char in char_lines])
         genders = classify_genders_bing(movie, gender_classifier, chars)
         print(movie+" passes test one: "+str(passes_test_one(chars,genders)))
-        testoneresults.write(movie+", "+str(passes_test_one(chars,genders)))
+        testoneresults.write(movie+", "+str(passes_test_one(chars,genders))+"\n")
     testoneresults.close()
-    '''scenes = split_by_scene(tagged_lines)
+
+
+###
+# The process of looking up character genders was slow, so I made this method to make local character files for each
+# of my "parseable" movie scripts so that I did not have to go look up the character genders every time I wanted to
+# run tests on the scripts.
+###
+def make_genders_files():
+    moviesfile = open("Parseable",'r')
+    movies = [movie.strip() for movie in moviesfile.readlines()]
     gender_classifier = make_classifier()
-    print(len(scenes))
-    # A list of all lines containing character mentions
-    char_lines = [line.strip() for line, tag in tagged_lines if tag == "C"]
-    # Pull any metadata out of character mention tags for gender classification purposes
-    chars = get_popular_characters([extract_character_names(char) for char in char_lines])
-    genders = classify_genders_bing(movie, gender_classifier, chars)
-    print("Passes Test One: ", passes_test_one(chars,genders))
-    for line, tag in scenes[4]:
-        if tag == "C":
-            try:
-                gender = genders[extract_character_names(line.strip())]
-                print(line,tag,gender)
-            except KeyError:
-                print(line, tag, "Not a popular character")
-        else:
-            print(line, tag)
-    '''
+    for movie in movies:
+        charfile = open("./Characters/"+movie, "w")
+        tagged_lines = tag_lines(movie)
+        char_lines = [line.strip() for line, tag in tagged_lines if tag =="C"]
+        chars = get_popular_characters([extract_character_names(char) for char in char_lines])
+        genders = classify_genders_bing(movie, gender_classifier, chars)
+        for character in chars:
+            charfile.write(character+","+genders[character]+"\n")
+
+
+def passes_test_two(tagged_lines):
+    scenes = split_by_scene(tagged_lines)
+    for scene in scenes:
+        char_lines = [line for line, tag in scene if tag == "C"]
+        if len(char_lines) > 0:
+            print(extract_character_names(char_lines[0].strip()))
+
+
+def main():
+    """movie = "Fight Club"
+    movie_lines = tag_lines("Fight Club")
+    passes_test_two(movie_lines)"""
 
 # I want to be able to import these functions as a module in a separate .py file without running the main method.
 if __name__ == "__main__":
