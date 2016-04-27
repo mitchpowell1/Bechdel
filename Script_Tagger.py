@@ -1,3 +1,29 @@
+"""
+Mitch Powell
+CSC 475 Final Project
+The Automated Bechdel Test Revisited
+26, April, 2016.
+
+This file contains many functions that aided in the collection and evaluation of data for the Bechdel test.
+It is not a fully functioning Plug-And-Play program that will find all of the movie scripts and characters, test them,
+and then evaluate the tests, but rather a collection of utilities that I wrote in order to programatically evaluate
+a large collection of movie scripts.
+
+This work was in a large part aided by the work of several papers. These can be found at the following URLS:
+
+Automating the Bechdel Test:
+    http://www.aclweb.org/anthology/N15-1084
+    - Their methodologies and results were very good, and with more time to work on this project I would have liked
+        to implement some of their other techniques.
+
+Parsing Screenplays for Extracting social networks in movies
+    http://www.aclweb.org/anthology/W14-0907
+    - This paper served as a very useful guide in making decisions about parsing and tagging movie screenplays,
+        and their techniques for evaluating how well-formatted a movie script is and performing a "sanity check"
+        on it proved to be very useful in my project.
+"""
+
+
 import nltk
 import re
 from urllib import request
@@ -278,11 +304,13 @@ def get_parseable_movies():
 
 
 ###
-# This function evaluates how good the performance of the classifier is for test One.
+# This function evaluates how good the performance of the classifier is for a test.
+#
+# The test_num input variable corresponds with which test you are checking for the performance of.
 ###
-def evaluate_test_one():
+def evaluate_test(test_num):
     moviesfile = open("Bechdel_Data", 'r')
-    testfile = open("t1", 'r')
+    testfile = open("t"+str(test_num), 'r')
     moviesfile.readline()
     bechdel_scores = {}
     visited = {}
@@ -305,74 +333,19 @@ def evaluate_test_one():
             total += 1
             passes_test = data[1].strip() == "True"
             # print(movie, passes_test)
-            # If the classifier evaluates that the movie passes the first test
+            # If the classifier evaluates that the movie passes the test
             if passes_test:
                 # Check if the data agrees
                 # True Positive:
-                if int(bechdel_scores[movie]) > 0:
+                if int(bechdel_scores[movie]) >= test_num:
                     true_pos += 1
                 # False positive
                 else:
                     false_pos += 1
-            # If the classifier evaluates that the movie failed the first test
+            # If the classifier evaluates that the movie failed the test
             else:
                 # True Negative:
-                if int(bechdel_scores[movie]) == 0:
-                    true_neg += 1
-                # False Negative:
-                else:
-                    false_neg += 1
-        else:
-            print(movie)
-    print("Total: " + str(total))
-    print("True Positives: " + str(true_pos))
-    print("True Negatives: " + str(true_neg))
-    print("False Positives: " + str(false_neg))
-    print("False Negatives: " + str(false_neg))
-    print("Accuracy: " + str((true_pos + true_neg) / total))
-
-
-###
-# This function is used to evaluate the performance of the classifier on the results for Bechdel test number two.
-###
-def evaluate_test_two():
-    moviesfile = open("Bechdel_Data", 'r')
-    testfile = open("t2", 'r')
-    moviesfile.readline()
-    bechdel_scores = {}
-    visited = {}
-    total = 0
-    true_pos = 0
-    false_pos = 0
-    true_neg = 0
-    false_neg = 0
-    for line in moviesfile:
-        if len(line.split(',')) == 3:
-            data = line.split(',')
-            movie = data[0].strip()
-            score = data[2].strip()
-            bechdel_scores[movie] = score
-    for line in testfile:
-        data = line.split(',')
-        movie = data[0].strip()
-        if not visited.get(movie):
-            visited[movie] = True
-            total += 1
-            passes_test = data[1].strip() == "True"
-            # print(movie, passes_test)
-            # If the classifier evaluates that the movie passes the first test
-            if passes_test:
-                # Check if the data agrees
-                # True Positive:
-                if int(bechdel_scores[movie]) > 1:
-                    true_pos += 1
-                # False positive
-                else:
-                    false_pos += 1
-            # If the classifier evaluates that the movie failed the first test
-            else:
-                # True Negative:
-                if int(bechdel_scores[movie]) < 2:
+                if int(bechdel_scores[movie]) < test_num:
                     true_neg += 1
                 # False Negative:
                 else:
@@ -471,7 +444,62 @@ def passes_test_two(movie):
 
 
 ###
-# Iterates through all parseable movies, and if they pass
+# A test to see if a movie passes test three. Iterates through the scenes until it finds a scene with two female
+# characters mentioned in consecutive order. When such a scene is found, it looks through all of the dialog lines
+# in that scene (split by spaces) if the dialog does not contain a male pronoun, or the name
+# of another character in the movie who has been marked as a male, the function marks it as a dialog
+# act that does not mention a man, and we say that the movie passes the third test.
+#
+# Accepts a movie name as an argument.
+###
+def passes_test_three(movie):
+    tagged_lines = tag_lines(movie)
+    scenes = split_by_scene(tagged_lines)
+    character_file = open('./Characters/'+movie)
+    characters = []
+    gender = {}
+    passes_t3 = False
+    male_characters = []
+    for line in character_file.readlines():
+        data = line.split(",")
+        if len(data) == 2:
+            char = data[0].strip()
+            characters.append(char)
+            gender[char] = data[1].strip()
+    for character in characters:
+        if gender[character] == "male":
+            male_characters.append(character.lower())
+    for scene in scenes:
+        candidate_scene = False
+        char_lines = [line for line,tag in scene if tag == "C"]
+        if len(char_lines) > 1:
+            # look through all of the characters in the scene
+            for char in range(len(char_lines) -1):
+                c1 = extract_character_names(char_lines[char])
+                c2 = extract_character_names(char_lines[char+1])
+                try:
+                    # see if the characters are both female, and make sure that they are not the same character
+                    if gender[c1] == "female" and gender[c2] == "female" and c1 != c2:
+                        # the movie passes test 2
+                        candidate_scene = True
+                # if the character does not appear often enough to have landed in the common character list,
+                # it is safe enough to assume that they have no name or are a male anyway.
+                except KeyError:
+                    continue
+        if candidate_scene:
+            mentions_men = False
+            dialog_lines = [line for line,tag in scene if tag == "D"]
+            for line in dialog_lines:
+                for item in line.split():
+                    if item.lower() in male_characters+["he","him","his","man"]:
+                        mentions_men = True
+            if not mentions_men:
+                passes_t3 = True
+    return passes_t3
+
+
+###
+# Iterates through all parseable movies, and if they pass test two
 ###
 def perform_test_two():
     test_one_results = open('t1', 'r')
@@ -487,9 +515,29 @@ def perform_test_two():
             test_two_results.write(movie+","+str(passes_test_two(movie))+"\n")
 
 
+###
+# Iterates through all of the movies that passed test two, And then sees if they pass test three
+###
+def perform_test_three():
+    test_two_results = open("t2", "r")
+    passed_t2 = {}
+    for line in test_two_results:
+        data = line.split(',')
+        passed_t2[data[0].strip()] = data[1].strip() == "True"
+    moviesfile = open("Parseable", 'r')
+    test_three_results = open('t3', 'w')
+    movies = [movie.strip() for movie in moviesfile.readlines()]
+    for movie in movies:
+        try:
+            if passed_t2[movie]:
+                test_three_results.write(movie+","+str(passes_test_three(movie))+"\n")
+        except KeyError:
+            continue
+
+
 def main():
-    #perform_test_two()
-    evaluate_test_two()
+    perform_test_three()
+    evaluate_test(3)
 
 
 # I want to be able to import these functions as a module in a separate .py file without running the main method.
