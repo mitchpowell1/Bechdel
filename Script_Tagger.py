@@ -352,12 +352,18 @@ def evaluate_test(test_num):
                     false_neg += 1
         else:
             print(movie)
+    print("Test: "+str(test_num))
     print("Total: " + str(total))
     print("True Positives: " + str(true_pos))
     print("True Negatives: " + str(true_neg))
-    print("False Positives: " + str(false_neg))
+    print("False Positives: " + str(false_pos))
     print("False Negatives: " + str(false_neg))
-    print("Accuracy: " + str((true_pos + true_neg) / total))
+    print("Total Accuracy: " + str((true_pos + true_neg) / total))
+    print("Recall (positive)" + str(true_pos/(true_pos+false_neg)))
+    print("Precision (positive)" + str(true_pos/(true_pos+false_pos)))
+    print("Recall (negative)" + str(true_neg/(true_neg+false_pos)))
+    print("Precision (negative)" + str(true_neg/(true_neg + false_neg)))
+    print()
 
 
 ###
@@ -536,7 +542,8 @@ def perform_test_three():
 
 
 def main():
-    perform_test_three()
+    evaluate_test(1)
+    evaluate_test(2)
     evaluate_test(3)
 
 
